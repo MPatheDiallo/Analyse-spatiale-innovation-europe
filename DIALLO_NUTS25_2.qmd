@@ -1,0 +1,394 @@
+---
+title: "Travail sur données attributaires des NUTS"
+author: "Mamadou Pathe DIALLO"
+format: pdf
+editor: visual
+---
+
+## 
+
+```{r, setup, echo=TRUE, include=FALSE}
+
+options(repos = c(CRAN = "https://cran.r-project.org"))
+install.packages("knitr")
+library(knitr)
+knitr::opts_chunk$set(echo=FALSE, comment=" ", warning = FALSE, results = "hold")
+library(knitr)
+library(tinytex)
+library(rmarkdown)
+library(haven)
+library(sf)
+library(geodata)
+library(ggplot2)
+library(cartography)
+library(mapsf)
+library(dplyr)
+library(classInt)
+library(readr)
+```
+
+```{r}
+#Chargeons les données
+rdata_path <- "C:/Users/mdiallo37/Documents/FPDATA_SIG.Rdata"
+load(rdata_path)
+head(FPDATA_SIG)
+str(FPDATA_SIG)
+```
+
+```{r}
+#chargeons les nuts
+install.packages('readr')
+library(readr)
+shapefile_path <- "C:/Users/mdiallo37/Downloads/NUTS_RG_20M_2010_3035.shp - 1/NUTS_RG_20M_2010_3035.shp"
+nuts_data <- st_read(shapefile_path)
+
+
+# Corriger les encodages des colonnes texte
+nuts <- nuts_data %>%
+  mutate(across(where(is.character), ~iconv(., from = "latin1", to = "UTF-8")))
+
+# Afficher un aper?u des donn?es
+head(nuts)
+
+#pour regarder contenu
+str(nuts)
+plot(st_geometry(nuts))
+```
+
+## Preparation des donnees
+
+### Filtrage par pays et fusion et creation de la variable GDP
+
+```{r}
+# Afficher les colonnes de FPDATA_SIG pour v?rifier les donn?es disponibles
+colnames(FPDATA_SIG)
+
+# Filtrer les pays requis (UK, FR, ES, DE) et s?lectionner les colonnes pertinentes
+filtered_fpdata <- FPDATA_SIG %>% 
+  filter(Pays %in% c("UK", "FR", "ES", "DE")) %>%
+  select(Geo, time, PATENTS, HK, RD, GDP, pop_activ_millier, Pays)  
+
+# Ajout de pop_activ_millier
+
+# Préparation des données géographiques
+filtered_shapefile <- nuts %>%
+  filter(CNTR_CODE %in% c("UK", "FR", "ES", "DE")) %>%  # Filtrer les pays requis
+  filter(!(NAME_LATN %in% c("Corse", "Reunion", "Martinique", "Guadeloupe", "Guyane", "Canarias"))) %>%  # Exclure certaines régions
+  filter((CNTR_CODE == "UK" & LEVL_CODE == 1) |  # NUTS1 pour UK
+         (CNTR_CODE != "UK" & LEVL_CODE == 2))  # NUTS2 pour les autres pays
+
+# Jointure des donn?es statistiques et g?ographiques
+map_data <- nuts %>%
+  left_join(
+    filtered_fpdata,  # Utiliser les donn?es filtr?es
+    by = c("NUTS_ID" = "Geo")
+  ) %>%
+  mutate(
+    GDP_per_Capita = GDP / pop_activ_millier  # Cr?ation de la variable GDP_per_Capita
+  )
+
+```
+
+## Analyse statistique
+
+### 1. Statistiques Descriptives
+
+```{r}
+
+summary(filtered_fpdata)
+
+```
+
+**Geo :** La variable *Geo* identifie les unités géographiques (pays ou régions), codées sous forme de chaînes de caractères. Elle sert de clé spatiale pour relier les observations aux découpages territoriaux (NUTS).
+
+**time :** La variable *time* couvre la période 1995–2012, avec une médiane et une moyenne autour de 2004, indiquant une concentration des observations au milieu des années 2000. Elle permet d’analyser l’évolution temporelle des dynamiques d’innovation et économiques.
+
+**PATENTS :** Le nombre de brevets présente une très forte dispersion, avec une distribution fortement asymétrique à droite (moyenne largement supérieure à la médiane). Cela traduit une concentration marquée de l’activité d’innovation dans un nombre limité de territoires très performants.
+
+**HK :** L’indicateur *HK* montre une variabilité modérée autour d’une moyenne d’environ 0,25, avec quelques valeurs élevées mais peu extrêmes. Les données manquantes restent limitées, ce qui permet des analyses comparatives relativement fiables.
+
+**RD :** Les dépenses de R&D sont très hétérogènes entre territoires, avec des valeurs maximales extrêmement élevées par rapport à la médiane. Cette dispersion suggère de fortes inégalités spatiales dans l’effort de recherche et d’innovation.
+
+**GDP :** Le PIB présente une distribution très étalée, allant de niveaux très faibles à des valeurs exceptionnellement élevées, révélant de forts écarts de richesse territoriale. La présence de valeurs manquantes impose une prudence dans certaines analyses statistiques ou spatiales.
+
+**pop_activ_millier :** La population active (en milliers) varie fortement selon les territoires, reflétant des différences structurelles de taille démographique et économique. La médiane nettement inférieure à la moyenne indique la présence de territoires très peuplés qui tirent la moyenne vers le haut.
+
+**Pays :** La variable *Pays* identifie le pays d’appartenance de chaque observation et permet des analyses multiniveaux (régions au sein des pays). Elle est essentielle pour étudier les effets nationaux, les comparaisons inter-pays et les dynamiques intra-nationales.
+
+### 2. Histogramme
+
+```{r}
+# Histogramme pour RD
+ggplot(filtered_fpdata, aes(x = RD)) +
+  geom_histogram(binwidth = 500, fill = "red", color = "black") +
+  labs(
+    title = "Distribution des Dépenses en R&D (RD)",
+    x = "Dépenses en R&D",
+    y = "Fréquence"
+  )
+
+```
+
+La distribution des dépenses en R&D est fortement asymétrique à droite : la grande majorité des observations se concentre à des niveaux faibles de dépenses, tandis qu’un petit nombre de régions présente des niveaux très élevés. Cela indique une forte hétérogénéité régionale en matière d’effort de recherche et développement.
+
+La présence d’une longue queue à droite (jusqu’à environ 15 000) suggère l’existence de quelques régions très intensives en R&D, probablement des pôles d’innovation majeurs, qui tirent la moyenne vers le haut. Dans ce contexte, la médiane est plus représentative que la moyenne pour décrire le niveau “typique” de dépenses en R&D, et une transformation logarithmique peut être pertinente pour les analyses statistiques ultérieures.
+
+### 3. Evolution des Brevets
+
+```{r}
+# PrÃ©paration des donnÃ©es pour l'Ã©volution des brevets
+evolution_brevets <- filtered_fpdata %>%
+  group_by(time) %>%  # Grouper par annÃ©e
+  summarise(total_patents = sum(PATENTS, na.rm = TRUE))  # Somme des brevets par annÃ©e
+
+# Visualisation de l'Ã©volution des brevets
+ggplot(evolution_brevets, aes(x = time, y = total_patents)) +
+  geom_line(color = "red", size = 1) +
+  geom_point(color = "blue", size = 2) +
+  labs(
+    title = "Evolution du nombre total de brevets",
+    x = "Annee",
+    y = "Nombre total de brevets"
+  ) +
+  theme_minimal()
+```
+
+On observe une hausse marquée du nombre total de brevets entre 1995 et le milieu des années 2000, traduisant une dynamique d’innovation soutenue et continue. Cette progression atteint un pic autour de 2006–2007, avec un niveau proche de 40 000 brevets.
+
+À partir de 2008–2009, la tendance s’inverse brutalement : le nombre de brevets chute fortement, ce qui suggère une rupture structurelle, probablement liée à la crise économique et financière mondiale, à un changement de couverture des données ou à une modification méthodologique. Cette baisse rapide marque une phase de ralentissement net de l’activité d’innovation mesurée par les brevets en fin de période.
+
+## Cartographie
+
+#### Création de classes communes
+
+```{r}
+# Combiner les donn?es de 2009 et 2010 pour cr?er des classes communes
+france_patents <- map_data %>%
+  filter(CNTR_CODE == "FR" & time %in% c(2009, 2010))
+
+# Cr?er des classes communes pour le nombre de brevets
+breaks_patents <- classIntervals(filtered_fpdata$PATENTS, n = 5, style = "quantile")$brks
+
+```
+
+### 1. Cartographie des brevets pour la France (2009 et 2010)
+
+```{r}
+# Appliquer le th?me par d?faut
+mf_theme("default")
+
+# Dessiner le fond de carte avec une couleur personnalis?e et des fronti?res visibles
+mf_map(france_patents_2009, col = "beige", border = "black", lwd = 0.5)
+
+# Ajouter une carte avec des symboles proportionnels pour le nombre de brevets
+mf_map(
+  x = france_patents_2009,
+  var = "PATENTS",  # Variable repr?sentant le nombre de brevets
+  type = "prop",  # Carte de symboles proportionnels
+  breaks = breaks_common_FRQ4,
+  col = "darkgreen",  # Couleur des symboles
+  leg_title = "Nombre de brevets",  # Titre de la l?gende
+  border = "black",  # Bordures des r?gions
+  lwd = 0.7  # ?paisseur des bordures
+)
+
+# Ajouter un titre ? la carte
+mf_title("Nombre de brevets en 2009")
+mf_credits("Eurostat")
+mf_layout(scale = TRUE)
+
+
+# Filtrer les donn?es pour la France en 2010
+france_patents_2010 <- map_data %>%
+  filter(CNTR_CODE == "FR" & time == 2010)
+
+# Appliquer le th?me par d?faut
+mf_theme("default")
+
+# Dessiner le fond de carte avec une couleur personnalis?e et des frontières visibles
+mf_map(france_patents_2010, col = "lightyellow", border = "black", lwd = 0.5)
+
+# Ajouter une carte avec des symboles proportionnels pour le nombre de brevets
+mf_map(
+  x = france_patents_2010,
+  var = "PATENTS",  # Variable représentant le nombre de brevets
+  type = "prop",  # Carte de symboles proportionnels
+  col = "darkblue",  # Couleur des symboles
+  leg_title = "Nombre de brevets",  # Titre de la l?gende
+  border = "black",  # Bordures des r?gions
+  lwd = 0.7  # ?paisseur des bordures
+)
+
+# Ajouter un titre de la carte
+mf_title("Nombre de brevets par région en France (2010)")
+mf_credits("Eurostat")
+mf_layout(scale = TRUE)
+```
+
+La carte met en évidence une concentration très marquée des brevets dans quelques régions, en particulier l’Île-de-France, qui domine très largement le reste du territoire. Cela reflète la centralisation des activités de R&D, des sièges d’entreprises innovantes et des centres de recherche.
+
+### Carte pour les depenses en R&D de la France (2009 et 2010)
+
+```{r}
+
+# Filtrer les donn?es pour la France en 2010
+france_rd_2010 <- map_data %>%
+  filter(CNTR_CODE == "FR" & time == 2010)
+
+# Appliquer le th?me par d?faut
+mf_theme("default")
+
+# Dessiner le fond de carte avec une couleur personnalis?e et des fronti?res visibles
+mf_map(france_rd_2010, col = "lightyellow", border = "black", lwd = 0.5)
+
+# Ajouter une carte avec des symboles proportionnels pour les d?penses en R&D
+mf_map(
+  x = france_rd_2010,
+  var = "RD",  # Variable repr?sentant les d?penses en R&D
+  type = "prop",  # Carte de symboles proportionnels
+  col = "darkred",  # Couleur des symboles
+  leg_title = "Dépenses R&D (millions)",  # Titre de la l?gende
+  border = "black",  # Bordures des r?gions
+  lwd = 0.7  # Epaisseur des bordures
+)
+
+# Ajouter un titre de la carte
+mf_title("Dépenses en R&D par région en France (2010)")
+
+```
+
+Les dépenses de R&D sont, comme les brevets, très concentrées spatialement.\
+L’Île-de-France concentre l’essentiel de l’effort national, suivie par quelques régions à forte base industrielle ou technologique, ce qui confirme le rôle central des grands pôles économiques et scientifiques dans le système d’innovation français.
+
+### Carte: Croissance par capital
+
+```{r}
+
+# Filtrer les donn?es pour la France en 2010
+france_gdp_2010 <- map_data %>%
+  filter(CNTR_CODE == "FR" & time == 2010)
+
+# Appliquer le th?me par d?faut
+mf_theme("default")
+
+# Dessiner le fond de carte avec une couleur grise et des fronti?res visibles
+mf_map(france_gdp_2010, 
+       col = "gray90",  # Fond de carte gris clair
+       border = "black",  # Bordures des r?gions
+       lwd = 0.5)  # ?paisseur des bordures
+
+# Ajouter des symboles proportionnels pour GDP per Capita
+mf_map(
+  x = france_gdp_2010,
+  var = "GDP_per_Capita",  # Variable proportionnelle
+  type = "prop",  # Type proportionnel
+  col = "darkred",  # Couleur des symboles
+  border = "black",  # Bordures des symboles
+  lwd = 0.7,  # ?paisseur des bordures
+  leg_title = "GDP per Capita (prop)",  # Titre de la légende
+  leg_pos = "right"  # Position de la l?gende ? droite
+)
+# Ajouter un titre ? la carte
+mf_title("GDP per Capita par région en France (2010)")
+```
+
+La carte met en évidence de **fortes disparités régionales de PIB par habitant** en France en 2010. Les cercles proportionnels montrent que certaines régions concentrent des niveaux de richesse nettement plus élevés que la moyenne nationale.
+
+La région **Île-de-France** se distingue très nettement par le cercle le plus important, traduisant un **PIB par habitant largement supérieur** aux autres régions. Cela reflète la forte concentration d’activités économiques à haute valeur ajoutée (sièges d’entreprises, services financiers, emplois qualifiés).
+
+Les régions du **Sud-Est (Auvergne-Rhône-Alpes, Provence-Alpes-Côte d’Azur)** et certaines régions du **Nord-Est** présentent également des niveaux relativement élevés, mais restent en retrait par rapport à l’Île-de-France.
+
+À l’inverse, plusieurs régions de l’**Ouest, du Centre et du Sud-Ouest** affichent des cercles plus petits, indiquant un **PIB par habitant plus faible**, souvent associé à une structure économique plus tournée vers l’agriculture, l’industrie traditionnelle ou des services moins productifs.
+
+### Cartographie : Parents in GDP per Capita
+
+```{r}
+# Filtrer les donn?es pour la France en 2010
+france_parents_2010 <- map_data %>%
+  filter(CNTR_CODE == "FR" & time == 2010)
+
+# Appliquer le th?me par d?faut
+mf_theme("default")
+
+# Dessiner le fond de carte avec choropl?the pour GDP per Capita
+mf_map(france_parents_2010, 
+       var = "GDP_per_Capita",  # Variable choropl?the
+       type = "choro",  # Type choropl?the
+       col = "Purples",  # Palette de couleurs
+       nbreaks = 6,  # Nombre de classes
+       border = "gray",  # Bordures des r?gions
+       lwd = 0.3,  # ?paisseur des bordures
+       leg_title = "GDP per Capita (2010)",  # Titre de la l?gende
+       leg_pos = "left")  # Position de la l?gende ? gauche
+
+# Ajouter des symboles proportionnels pour PATENTS
+mf_map(
+  x = france_parents_2010,
+  var = "PATENTS",  # Variable proportionnelle
+  type = "prop",  # Type proportionnel
+  col = "orange",  # Couleur des symboles
+  border = "black",  # Bordures des symboles
+  lwd = 0.8,  # ?paisseur des bordures
+  leg_title = "Patents (prop)",  # Titre de la l?gende
+  leg_pos = "right")  # Position de la l?gende ? droite
+
+# Ajouter un titre ? la carte
+mf_title("GDP per Capita et Patents par région en France (2010)")
+
+
+```
+
+L’**Île-de-France** se distingue très nettement :
+
+-   elle cumule **le PIB par habitant le plus élevé**
+
+-   et **le plus grand nombre de brevets**.
+
+Cela confirme son rôle de **pôle central de l’innovation française**, lié à la concentration de sièges d’entreprises, de centres de R&D, d’universités et de main-d’œuvre hautement qualifiée.
+
+Globalement, on observe une **corrélation positive** : les régions à **PIB par habitant élevé** (Auvergne-Rhône-Alpes, PACA, Occitanie, Grand Est) présentent aussi une **activité de brevets relativement importante**.
+
+Cependant, la relation n’est **pas mécanique** : certaines régions avec un PIB intermédiaire affichent un nombre significatif de brevets, ce qui suggère l’importance de **facteurs structurels** (spécialisation industrielle, politiques régionales d’innovation).
+
+```{r}
+library(dplyr)
+library(readr)
+
+france_2009 <- map_data %>%
+  filter(Pays == "France" | CNTR_CODE == "FR") %>%
+  filter(time == 2009)
+
+vars_corr_num <- france_2009 %>%
+  select(where(is.numeric)) %>%
+  mutate(across(everything(), ~ readr::parse_number(as.character(.))))
+
+cor_pearson <- cor(vars_corr_num, use = "pairwise.complete.obs", method = "pearson")
+cor_pearson
+
+```
+
+```{r}
+round(cor_pearson, 3)
+
+```
+
+## Analyse des corrélations entre innovation, économie et démographie
+
+L’analyse des corrélations de Pearson met en évidence des **relations très fortes et cohérentes entre les variables d’innovation et les variables économiques** au niveau régional. Le nombre de **brevets (PATENTS)** est **très fortement corrélé** aux **dépenses de R&D (RD)** *(r = 0,968)* et au **PIB total (GDP)** *(r = 0,965)*, ce qui confirme que l’innovation technologique est étroitement liée à l’effort de recherche et à la taille économique des régions. Ces résultats suggèrent que les régions les plus productives en brevets sont avant tout celles qui disposent de **capacités financières importantes et d’un investissement massif en R&D**.
+
+Par ailleurs, la **population active (pop_activ_millier)** présente également une corrélation très élevée avec les brevets *(r = 0,956)*, indiquant que l’innovation est fortement concentrée dans les régions à forte masse de main-d’œuvre. Cela traduit un **effet d’agglomération** : les grandes régions, plus peuplées et plus dynamiques économiquement, concentrent à la fois les ressources humaines, la production économique et l’activité inventive.
+
+Le **capital humain (HK)** est positivement corrélé aux brevets *(r = 0,672)* et à la R&D *(r = 0,719)*, mais de manière plus modérée que les variables de taille économique. Cela suggère que, bien que la qualité du capital humain soit un facteur important de l’innovation, son effet est **renforcé lorsqu’il s’inscrit dans un environnement économique puissant**, combinant investissements, infrastructures et marchés importants.
+
+Le **PIB par habitant (GDP_per_Capita)** montre des corrélations positives mais moins élevées avec les brevets *(r = 0,801)* et la R&D *(r = 0,828)*. Ce résultat indique que le **niveau de richesse individuelle** favorise l’innovation, mais qu’il joue un rôle secondaire par rapport à la **taille globale de l’économie régionale**. Autrement dit, l’innovation est davantage liée au volume d’activité économique qu’au seul niveau de vie moyen.
+
+Enfin, la variable **geometry** n’entretient aucune corrélation significative avec les variables économiques ou d’innovation, ce qui est attendu : elle ne porte pas de contenu économique et confirme la **validité statistique de l’analyse** (absence de corrélations artificielles).
+
+Ces résultats sont cohérents avec les **cartes précédentes**, qui montrent une forte concentration spatiale de l’innovation dans les grandes régions économiques et métropolitaines. À l’inverse, le capital humain (HK) et le PIB par habitant, bien que positivement corrélés aux brevets, jouent un rôle plus modéré, suggérant que l’innovation dépend davantage de la **masse critique économique et productive** que du seul niveau de richesse individuelle.
+
+#Correction
+
+```{r}
+#
+Nuts2FR_donneesattributaires$popdens <- 1e9 * Nuts2FR
+```
