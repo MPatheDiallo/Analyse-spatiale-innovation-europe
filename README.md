@@ -4,6 +4,10 @@
 ![Analyse Spatiale](https://img.shields.io/badge/Analyse%20Spatiale-GIS-success)
 ![Quarto](https://img.shields.io/badge/Quarto-Projet-blueviolet)
 ![Eurostat](https://img.shields.io/badge/Données-Eurostat-orange)
+![R](https://img.shields.io/badge/R-Statistics-blue)
+![Quarto](https://img.shields.io/badge/Quarto-Reporting-purple)
+![ggplot2](https://img.shields.io/badge/ggplot2-Visualization-success)
+![sf](https://img.shields.io/badge/sf-Spatial%20Analysis-orange)
 
 ---
 
